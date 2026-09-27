@@ -3,6 +3,7 @@ package recorder
 import (
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/bilirec/bilirec/internal/services/danmaku"
 	"github.com/bilirec/bilirec/pkg/ds"
@@ -14,13 +15,15 @@ type recordingFile struct {
 	path    string
 	stamp   string
 	segment int
+	size    int64
 }
 
 func (r *Service) ensureDiskSpace(l logger.Logger, p internalStartParams) error {
 	if r.cfg.MinDiskSpaceBytes <= 0 {
 		return nil
 	}
-	for {
+	const maxPasses = 2
+	for pass := 0; pass < maxPasses; pass++ {
 		usage, err := utils.GetDiskSpace(r.cfg.OutputDir)
 		if err != nil {
 			l.Warnf("cannot check disk space: %v", err)
@@ -32,28 +35,86 @@ func (r *Service) ensureDiskSpace(l logger.Logger, p internalStartParams) error 
 		if !p.opts.deleteOldestOnLowDisk {
 			return ErrInsufficientDiskSpace
 		}
-		oldest, ok := r.pickOldestDeletableRecording(p)
-		if !ok {
+		need := int64(r.cfg.MinDiskSpaceBytes) - int64(usage.Free)
+		files := r.listDeletableRecordings(p)
+		freed, deleted := r.deleteUntil(l, p.roomId, files, need)
+		if deleted == 0 {
 			return ErrInsufficientDiskSpace
 		}
-		base := filepath.Base(oldest.path)
+		if freed >= need {
+			break
+		}
+	}
+	usage, err := utils.GetDiskSpace(r.cfg.OutputDir)
+	if err != nil {
+		l.Warnf("cannot check disk space: %v", err)
+		return nil
+	}
+	if isInsufficientDiskSpace(usage.Free, r.cfg.MinDiskSpaceBytes) {
+		return ErrInsufficientDiskSpace
+	}
+	return nil
+}
+
+func (r *Service) listDeletableRecordings(p internalStartParams) []recordingFile {
+	protected := r.protectedBasenames(p)
+	var files []recordingFile
+	for _, dir := range utils.RoomRecordingDirs(r.cfg.OutputDir, p.roomId) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if protected.Contains(name) {
+				continue
+			}
+			stamp, segment, ok := utils.ParseRecordingSegmentFilename(name)
+			if !ok {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			files = append(files, recordingFile{
+				path:    filepath.Join(dir, name),
+				stamp:   stamp,
+				segment: segment,
+				size:    info.Size(),
+			})
+		}
+	}
+	sort.SliceStable(files, func(i, j int) bool {
+		return recordingFilenameOlder(files[i], files[j])
+	})
+	return files
+}
+
+func (r *Service) deleteUntil(l logger.Logger, roomID int, files []recordingFile, need int64) (freed int64, deleted int) {
+	for _, f := range files {
+		if freed >= need {
+			break
+		}
+		base := filepath.Base(f.path)
 		if r.writingFiles.Contains(base) {
 			continue
 		}
-		if err := os.Remove(oldest.path); err != nil {
-			l.Warnf("删除最旧录像失败 room=%d path=%s err=%v", p.roomId, oldest.path, err)
-			return ErrInsufficientDiskSpace
+		if err := os.Remove(f.path); err != nil {
+			l.Warnf("删除最旧录像失败 room=%d path=%s err=%v", roomID, f.path, err)
+			continue
 		}
 		for _, ext := range []string{".jsonl", ".xml"} {
-			_ = utils.RemoveIfExists(danmaku.PathForVideo(oldest.path, ext))
+			_ = utils.RemoveIfExists(danmaku.PathForVideo(f.path, ext))
 		}
-		l.Infof("磁盘空间不足，已删除房间 %d 最旧录像：%s", p.roomId, oldest.path)
+		l.Infof("磁盘空间不足，已删除房间 %d 最旧录像：%s", roomID, f.path)
+		freed += f.size
+		deleted++
 	}
-}
-
-func (r *Service) pickOldestDeletableRecording(p internalStartParams) (recordingFile, bool) {
-	protected := r.protectedBasenames(p)
-	return oldestRecordingFile(r.cfg.OutputDir, p.roomId, protected)
+	return freed, deleted
 }
 
 func (r *Service) protectedBasenames(p internalStartParams) ds.Set[string] {
@@ -67,37 +128,6 @@ func (r *Service) protectedBasenames(p internalStartParams) ds.Set[string] {
 		}
 	}
 	return skip
-}
-
-func oldestRecordingFile(outputDir string, roomID int, skip ds.Set[string]) (recordingFile, bool) {
-	var best recordingFile
-	found := false
-	for _, dir := range utils.RoomRecordingDirs(outputDir, roomID) {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			name := entry.Name()
-			if skip.Contains(name) {
-				continue
-			}
-			stamp, segment, ok := utils.ParseRecordingSegmentFilename(name)
-			if !ok {
-				continue
-			}
-			path := filepath.Join(dir, name)
-			candidate := recordingFile{path: path, stamp: stamp, segment: segment}
-			if !found || recordingFilenameOlder(candidate, best) {
-				best = candidate
-				found = true
-			}
-		}
-	}
-	return best, found
 }
 
 func recordingFilenameOlder(a, b recordingFile) bool {

@@ -401,7 +401,7 @@ func TestIsTransientAutoStartError(t *testing.T) {
 		{err: recorder.ErrStreamURLsUnreachable, want: true},
 		{err: recorder.ErrLiveAPI, want: true},
 		{err: recorder.ErrMaxConcurrentRecordingsReached, want: true},
-		{err: recorder.ErrInsufficientDiskSpace, want: true},
+		{err: recorder.ErrInsufficientDiskSpace, want: false},
 		{err: recorder.ErrStreamNotLive, want: true},
 		{err: errors.New("other"), want: true},
 		{err: fmt.Errorf("%w: timeout", recorder.ErrLiveAPI), want: true},

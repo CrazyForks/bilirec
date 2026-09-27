@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -68,9 +69,12 @@ func TestEnqueueDoesNotBlockWhenQueueFull(t *testing.T) {
 	}
 }
 
-func TestEnqueueDoesNotBlockWhenPendingFull(t *testing.T) {
+func TestEnqueueDoesNotBlockWhenDeliverPoolFull(t *testing.T) {
 	block := make(chan struct{})
+	var inFlight atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		inFlight.Add(1)
+		defer inFlight.Add(-1)
 		<-block
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -79,26 +83,14 @@ func TestEnqueueDoesNotBlockWhenPendingFull(t *testing.T) {
 	cfg := &config.Config{WebhookURLs: srv.URL}
 	svc := newWebhookService(t, cfg)
 
-	room1 := &bilibili.LiveRoomInfoDetail{RoomID: 1, Uname: "u", Title: "t"}
-	svc.StreamStarted(room1)
-
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if len(svc.pending) >= pendingWorkCap {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("pending did not fill, len=%d cap=%d", len(svc.pending), pendingWorkCap)
-		}
-		for i := 2; i <= pendingWorkCap+2 && len(svc.pending) < pendingWorkCap; i++ {
-			svc.StreamStarted(&bilibili.LiveRoomInfoDetail{RoomID: int64(i), Uname: "u", Title: "t"})
-		}
-		time.Sleep(5 * time.Millisecond)
+	for i := 1; i <= maxConcurrentDelivers+2; i++ {
+		svc.StreamStarted(&bilibili.LiveRoomInfoDetail{RoomID: int64(i), Uname: "u", Title: "t"})
 	}
+	waitWebhookDeliveriesInFlight(t, &inFlight, maxConcurrentDelivers, 3*time.Second)
 
 	done := make(chan struct{})
 	go func() {
-		for i := pendingWorkCap + 10; i <= pendingWorkCap + 30; i++ {
+		for i := maxConcurrentDelivers + 20; i <= maxConcurrentDelivers + 40; i++ {
 			svc.StreamStarted(&bilibili.LiveRoomInfoDetail{RoomID: int64(i), Uname: "u", Title: "t"})
 		}
 		close(done)
@@ -107,7 +99,7 @@ func TestEnqueueDoesNotBlockWhenPendingFull(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("emit blocked while pending was full")
+		t.Fatal("emit blocked while deliver pool was full")
 	}
 	close(block)
 }

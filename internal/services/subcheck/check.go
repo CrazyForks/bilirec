@@ -342,7 +342,8 @@ func isTransientAutoStartError(err error) bool {
 		errors.Is(err, recorder.ErrRecordingPending) ||
 		errors.Is(err, context.Canceled) ||
 		errors.Is(err, recorder.ErrRoomBanned) ||
-		errors.Is(err, recorder.ErrRoomEncrypted) {
+		errors.Is(err, recorder.ErrRoomEncrypted) ||
+		errors.Is(err, recorder.ErrInsufficientDiskSpace) {
 		return false
 	}
 	return true

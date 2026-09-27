@@ -11,6 +11,7 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/puzpuzpuz/xsync/v4"
 	"go.uber.org/fx"
+	"golang.org/x/sync/semaphore"
 )
 
 var log = logger.Named("webhook")
@@ -23,11 +24,12 @@ type Service struct {
 	outputDir string
 	client    *resty.Client
 
-	rooms    *xsync.Map[int, *roomQueue]
-	pending  chan roomWork
-	ctx      context.Context
-	cancel   context.CancelFunc
-	workerWg sync.WaitGroup
+	rooms      *xsync.Map[int, *roomQueue]
+	pending    chan roomWork
+	deliverConcurrent *semaphore.Weighted
+	ctx        context.Context
+	cancel     context.CancelFunc
+	workerWg   sync.WaitGroup
 
 	convertMetaMu sync.Mutex
 	convertMeta   map[string]*SegmentMeta
@@ -49,6 +51,7 @@ func NewService(lc fx.Lifecycle, cfg *config.Config) *Service {
 		client:      client,
 		rooms:       xsync.NewMap[int, *roomQueue](),
 		pending:     make(chan roomWork, pendingWorkCap),
+		deliverConcurrent: semaphore.NewWeighted(int64(maxConcurrentDelivers)),
 		ctx:         ctx,
 		cancel:      cancel,
 		convertMeta: make(map[string]*SegmentMeta),
@@ -91,29 +94,37 @@ func (s *Service) emit(eventType EventType, data roomEventData) {
 }
 
 func (s *Service) deliver(ctx context.Context, body envelope) {
+	var wg sync.WaitGroup
 	for _, url := range s.urls {
-		for attempt := 1; attempt <= maxAttempts; attempt++ {
-			if ctx.Err() != nil {
-				return
-			}
-			resp, err := s.client.R().
-				SetContext(ctx).
-				SetBody(body).
-				Post(url)
-			if err == nil && resp != nil && resp.StatusCode() >= 200 && resp.StatusCode() < 300 {
-				break
-			}
-			if err != nil {
-				log.Warnf("webhook POST %s 失败（%d/%d）：%v", url, attempt, maxAttempts, err)
-			} else if resp != nil {
-				log.Warnf("webhook POST %s 非 2xx（%d/%d）：%d", url, attempt, maxAttempts, resp.StatusCode())
-			}
-			if attempt == maxAttempts {
-				break
-			}
-			if !sleepBackoff(ctx, time.Duration(attempt)*time.Second) {
-				return
-			}
+		wg.Go(func() {
+			s.deliverURL(ctx, url, body)
+		})
+	}
+	wg.Wait()
+}
+
+func (s *Service) deliverURL(ctx context.Context, url string, body envelope) {
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if ctx.Err() != nil {
+			return
+		}
+		resp, err := s.client.R().
+			SetContext(ctx).
+			SetBody(body).
+			Post(url)
+		if err == nil && resp != nil && resp.StatusCode() >= 200 && resp.StatusCode() < 300 {
+			break
+		}
+		if err != nil {
+			log.Warnf("webhook POST %s 失败（%d/%d）：%v", url, attempt, maxAttempts, err)
+		} else if resp != nil {
+			log.Warnf("webhook POST %s 非 2xx（%d/%d）：%d", url, attempt, maxAttempts, resp.StatusCode())
+		}
+		if attempt == maxAttempts {
+			break
+		}
+		if !sleepBackoff(ctx, time.Duration(attempt)*time.Second) {
+			return
 		}
 	}
 }

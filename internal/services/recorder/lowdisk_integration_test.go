@@ -85,6 +85,41 @@ func TestIntegration_LowDisk_DeletesOldestInRoomByFilename(t *testing.T) {
 	}
 }
 
+func TestIntegration_LowDisk_DeletesMultipleOldestFirst(t *testing.T) {
+	lowDiskIntegrationMu.Lock()
+	defer lowDiskIntegrationMu.Unlock()
+
+	r := newLowDiskFxRecorder(t)
+
+	oldest := writeRoomMediaFile(t, r.cfg.OutputDir, lowDiskTestUname, lowDiskTestRoomID,
+		"aaa-20200101_000000.flv", []byte("oldest"))
+	middle := writeRoomMediaFile(t, r.cfg.OutputDir, lowDiskTestUname, lowDiskTestRoomID,
+		"bbb-20200201_000000.flv", []byte("middle"))
+	newest := writeRoomMediaFile(t, r.cfg.OutputDir, lowDiskTestUname, lowDiskTestRoomID,
+		"zzz-20260101_000000.flv", []byte("newest"))
+
+	usage, err := utils.GetDiskSpace(r.cfg.OutputDir)
+	if err != nil {
+		t.Fatalf("GetDiskSpace: %v", err)
+	}
+	// Need more than one segment but less than two full padded files.
+	r.cfg.MinDiskSpaceBytes = int64(usage.Free) + lowDiskTestMediaSize + lowDiskTestMediaSize/2 + 1
+
+	err = r.ensureDiskSpace(log, lowDiskEnsureParams(true))
+	if err != nil {
+		t.Fatalf("ensureDiskSpace: %v", err)
+	}
+	if _, err := os.Stat(oldest); !os.IsNotExist(err) {
+		t.Fatalf("expected oldest removed, stat err=%v", err)
+	}
+	if _, err := os.Stat(middle); !os.IsNotExist(err) {
+		t.Fatalf("expected middle removed, stat err=%v", err)
+	}
+	if _, err := os.Stat(newest); err != nil {
+		t.Fatalf("expected newest kept: %v", err)
+	}
+}
+
 func TestIntegration_LowDisk_DoesNotDeleteOtherRooms(t *testing.T) {
 	lowDiskIntegrationMu.Lock()
 	defer lowDiskIntegrationMu.Unlock()

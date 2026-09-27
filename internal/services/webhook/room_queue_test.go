@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -178,11 +179,14 @@ func TestRescheduleBackloggedRoomsDelivers(t *testing.T) {
 
 func TestPendingFullBacklogDeliveredAfterWorkerDrains(t *testing.T) {
 	block := make(chan struct{})
+	var inFlight atomic.Int32
 	var mu sync.Mutex
 	var targetSeen bool
 	const targetRoom = pendingWorkCap + 50
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		inFlight.Add(1)
+		defer inFlight.Add(-1)
 		b, _ := io.ReadAll(r.Body)
 		var env envelope
 		_ = json.Unmarshal(b, &env)
@@ -202,18 +206,10 @@ func TestPendingFullBacklogDeliveredAfterWorkerDrains(t *testing.T) {
 	cfg := &config.Config{WebhookURLs: srv.URL}
 	svc := newWebhookService(t, cfg)
 
-	svc.StreamStarted(&bilibili.LiveRoomInfoDetail{RoomID: 1, Uname: "u", Title: "t"})
-
-	fillDeadline := time.Now().Add(2 * time.Second)
-	for len(svc.pending) < pendingWorkCap {
-		if time.Now().After(fillDeadline) {
-			t.Fatalf("pending len=%d", len(svc.pending))
-		}
-		for i := 2; i <= pendingWorkCap+2 && len(svc.pending) < pendingWorkCap; i++ {
-			svc.StreamStarted(&bilibili.LiveRoomInfoDetail{RoomID: int64(i), Uname: "u", Title: "t"})
-		}
-		time.Sleep(5 * time.Millisecond)
+	for i := 1; i <= maxConcurrentDelivers; i++ {
+		svc.StreamStarted(&bilibili.LiveRoomInfoDetail{RoomID: int64(i), Uname: "u", Title: "t"})
 	}
+	waitWebhookDeliveriesInFlight(t, &inFlight, maxConcurrentDelivers, 3*time.Second)
 
 	svc.StreamStarted(&bilibili.LiveRoomInfoDetail{RoomID: int64(targetRoom), Uname: "u", Title: "t"})
 

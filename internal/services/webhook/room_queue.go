@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	perRoomQueueCap = 32
-	pendingWorkCap  = 64
-	roomIdleEvict   = 30 * time.Second
+	perRoomQueueCap         = 32
+	pendingWorkCap          = 64
+	maxConcurrentDelivers   = 8
+	roomIdleEvict           = 30 * time.Second
 )
 
 type roomQueue struct {
@@ -145,7 +146,13 @@ func (s *Service) rescheduleBackloggedRooms() {
 }
 
 func (s *Service) processRoomWork(w roomWork) {
-	w.q.releaseSchedule()
+	keepScheduled := false
+	defer func() {
+		if !keepScheduled {
+			w.q.releaseSchedule()
+		}
+	}()
+
 	if w.q.isClosed() {
 		return
 	}
@@ -155,24 +162,33 @@ func (s *Service) processRoomWork(w roomWork) {
 		if !ok {
 			return
 		}
-		s.deliver(s.ctx, body)
+		keepScheduled = s.startDeliver(w, body)
 	default:
-		return
 	}
+}
 
-	w.q.mu.Lock()
-	defer func() {
+// startDeliver returns true when delivery was handed off; the caller must not
+// release the room schedule flag until the delivery goroutine finishes.
+func (s *Service) startDeliver(w roomWork, body envelope) bool {
+	if err := s.deliverConcurrent.Acquire(s.ctx, 1); err != nil {
+		return false
+	}
+	s.workerWg.Go(func() {
+		defer s.deliverConcurrent.Release(1)
+		s.deliver(s.ctx, body)
+		w.q.releaseSchedule()
+
+		w.q.mu.Lock()
+		hasMore := !w.q.closed && len(w.q.ch) > 0
+		if !w.q.closed && len(w.q.ch) == 0 {
+			w.q.emptySince = time.Now()
+		}
 		w.q.mu.Unlock()
-		if !w.q.closed && len(w.q.ch) > 0 {
+		if hasMore {
 			s.maybeSchedule(w.roomID, w.q)
 		}
-	}()
-	if w.q.closed {
-		return
-	}
-	if len(w.q.ch) == 0 {
-		w.q.emptySince = time.Now()
-	}
+	})
+	return true
 }
 
 func (s *Service) evictIdleRooms() {
