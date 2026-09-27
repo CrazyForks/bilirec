@@ -67,6 +67,17 @@ func WaitUntilNoActiveRecordings(t *testing.T, recorderService *recorder.Service
 	t.Fatalf("cleanup timeout: still has %d active recordings", recorderService.ListRecordingSize())
 }
 
+// StopRecording stops an active recording. A false return is not a failure:
+// a live room may already have auto-stopped (streamer offline past
+// MaxRetryMinutes, duration cap, etc.).
+func StopRecording(t *testing.T, recorderService *recorder.Service, roomID int) {
+	t.Helper()
+	t.Log("stopping recording")
+	if !recorderService.Stop(roomID) {
+		t.Logf("stop returned false for room=%d (recording may have already ended)", roomID)
+	}
+}
+
 type ConcurrentStartResult struct {
 	Room int
 	Err  error
