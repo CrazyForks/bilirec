@@ -150,10 +150,7 @@ func runMetricsIntegrationRecordTest(t *testing.T) {
 	t.Logf("metrics integration: recording room=%d for %s (output=%s)", roomID, recordDuration, outputPath)
 	_ = sess.Monitor.RunRecordingProfiledWait(t, "metrics_recording", recordDuration)
 
-	t.Log("stopping recording")
-	if !sess.Recorder.Stop(roomID) {
-		t.Fatal("stop returned false")
-	}
+	recording.StopRecording(t, sess.Recorder, roomID)
 	recording.WaitUntilNoActiveRecordings(t, sess.Recorder, 30*time.Second)
 	time.Sleep(recording.SettleAfterStop)
 

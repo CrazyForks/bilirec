@@ -1,13 +1,15 @@
 package webhook_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -98,40 +100,74 @@ func startWebhookIntegrationCollector(t *testing.T) (baseURL string, collector *
 	return "http://" + ln.Addr().String(), collector
 }
 
-func waitForWebhookEventTypes(
+const (
+	webhookRequiredSessionStarted = "SessionStarted"
+	webhookRequiredFileOpening    = "FileOpening"
+	webhookRequiredFileClosed     = "FileClosed"
+	webhookRequiredSessionEnded   = "SessionEnded"
+
+	// recorder.finalize skips FileClosed (and may delete the file) under 1KB.
+	webhookKeptSegmentMinBytes int64 = 1024
+)
+
+func waitForWebhookLifecycle(
 	t *testing.T,
 	collector *webhookIntegrationCollector,
 	roomID int,
-	required []string,
+	outputDir string,
 	timeout time.Duration,
 ) []integrationWebhookEnvelope {
 	t.Helper()
 
 	deadline := time.Now().Add(timeout)
-	want := make(map[string]bool, len(required))
-	for _, et := range required {
-		want[et] = true
-	}
-
 	for {
 		posts := filterWebhookPostsForRoom(collector.snapshot(), roomID)
-		for _, p := range posts {
-			delete(want, p.EventType)
-		}
-		if len(want) == 0 {
+		if webhookLifecycleSettled(posts, outputDir) {
 			return posts
 		}
 		if time.Now().After(deadline) {
-			missing := make([]string, 0, len(want))
-			for et := range want {
-				missing = append(missing, et)
-			}
-			sort.Strings(missing)
 			got := eventTypeCounts(posts)
-			t.Fatalf("webhook drain timeout: missing %v for room %d; got %v", missing, roomID, got)
+			t.Fatalf("webhook drain timeout for room %d; got %v", roomID, got)
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
+}
+
+func webhookLifecycleSettled(posts []integrationWebhookEnvelope, outputDir string) bool {
+	counts := eventTypeCounts(posts)
+	if counts[webhookRequiredSessionStarted] < 1 ||
+		counts[webhookRequiredSessionEnded] < 1 ||
+		counts[webhookRequiredFileOpening] < 1 ||
+		counts[webhookRequiredFileClosed] < 1 {
+		return false
+	}
+	closed := webhookRelativePaths(posts, webhookRequiredFileClosed)
+	for rel := range webhookRelativePaths(posts, webhookRequiredFileOpening) {
+		if closed[rel] {
+			continue
+		}
+		abs := filepath.Join(outputDir, filepath.FromSlash(rel))
+		stat, err := os.Stat(abs)
+		if err == nil && stat.Size() >= webhookKeptSegmentMinBytes {
+			return false
+		}
+	}
+	return true
+}
+
+func webhookRelativePaths(posts []integrationWebhookEnvelope, eventType string) map[string]bool {
+	out := make(map[string]bool)
+	for _, p := range posts {
+		if p.EventType != eventType {
+			continue
+		}
+		data, ok := parseIntegrationWebhookData(p.EventData)
+		if !ok || data.RelativePath == "" {
+			continue
+		}
+		out[data.RelativePath] = true
+	}
+	return out
 }
 
 func filterWebhookPostsForRoom(posts []integrationWebhookEnvelope, roomID int) []integrationWebhookEnvelope {
@@ -180,21 +216,21 @@ func assertWebhookRecordingLifecycle(
 		byType[p.EventType] = append(byType[p.EventType], p)
 	}
 
-	sessionStarted := byType["SessionStarted"]
+	sessionStarted := byType[webhookRequiredSessionStarted]
 	if len(sessionStarted) != 1 {
-		t.Fatalf("SessionStarted count %d", len(sessionStarted))
+		t.Fatalf("SessionStarted count %d, want 1", len(sessionStarted))
 	}
-	fileOpening := byType["FileOpening"]
-	if len(fileOpening) != 1 {
-		t.Fatalf("FileOpening count %d", len(fileOpening))
-	}
-	fileClosed := byType["FileClosed"]
-	if len(fileClosed) != 1 {
-		t.Fatalf("FileClosed count %d", len(fileClosed))
-	}
-	sessionEnded := byType["SessionEnded"]
+	sessionEnded := byType[webhookRequiredSessionEnded]
 	if len(sessionEnded) != 1 {
-		t.Fatalf("SessionEnded count %d", len(sessionEnded))
+		t.Fatalf("SessionEnded count %d, want 1", len(sessionEnded))
+	}
+	fileOpening := byType[webhookRequiredFileOpening]
+	if len(fileOpening) < 1 {
+		t.Fatal("missing FileOpening")
+	}
+	fileClosed := byType[webhookRequiredFileClosed]
+	if len(fileClosed) < 1 {
+		t.Fatal("missing FileClosed")
 	}
 
 	sessionData, ok := parseIntegrationWebhookData(sessionStarted[0].EventData)
@@ -208,29 +244,59 @@ func assertWebhookRecordingLifecycle(
 		t.Fatal("SessionStarted expected Recording=true")
 	}
 
-	openData, ok := parseIntegrationWebhookData(fileOpening[0].EventData)
-	if !ok || openData.SessionID != sessionData.SessionID {
-		t.Fatalf("FileOpening SessionId mismatch: %q", openData.SessionID)
-	}
-	if openData.RelativePath == "" {
-		t.Fatal("FileOpening missing RelativePath")
+	openByPath := make(map[string]integrationWebhookEventData, len(fileOpening))
+	for i, p := range fileOpening {
+		data, ok := parseIntegrationWebhookData(p.EventData)
+		if !ok || data.SessionID != sessionData.SessionID {
+			t.Fatalf("FileOpening[%d] SessionId mismatch: %q", i, data.SessionID)
+		}
+		if data.RelativePath == "" {
+			t.Fatalf("FileOpening[%d] missing RelativePath", i)
+		}
+		if _, dup := openByPath[data.RelativePath]; dup {
+			t.Fatalf("duplicate FileOpening for %q", data.RelativePath)
+		}
+		openByPath[data.RelativePath] = data
 	}
 
-	closeData, ok := parseIntegrationWebhookData(fileClosed[0].EventData)
-	if !ok || closeData.SessionID != sessionData.SessionID {
-		t.Fatalf("FileClosed SessionId mismatch: %q", closeData.SessionID)
+	closedPaths := make(map[string]struct{}, len(fileClosed))
+	for i, p := range fileClosed {
+		data, ok := parseIntegrationWebhookData(p.EventData)
+		if !ok || data.SessionID != sessionData.SessionID {
+			t.Fatalf("FileClosed[%d] SessionId mismatch: %q", i, data.SessionID)
+		}
+		if _, ok := openByPath[data.RelativePath]; !ok {
+			t.Fatalf("FileClosed RelativePath %q has no FileOpening", data.RelativePath)
+		}
+		if data.FileCloseTime == "" || data.FileOpenTime == "" {
+			t.Fatalf("FileClosed[%d] missing file times", i)
+		}
+		if data.FileSize <= 0 {
+			t.Fatalf("FileClosed[%d] FileSize %d", i, data.FileSize)
+		}
+		if data.Duration < 0 {
+			t.Fatalf("FileClosed[%d] Duration %v", i, data.Duration)
+		}
+		abs := filepath.Join(outputDir, filepath.FromSlash(data.RelativePath))
+		stat, err := os.Stat(abs)
+		if err != nil {
+			t.Fatalf("stat FileClosed %s: %v", data.RelativePath, err)
+		}
+		if data.FileSize != stat.Size() {
+			t.Fatalf("FileClosed FileSize %d != file %d path=%s", data.FileSize, stat.Size(), data.RelativePath)
+		}
+		closedPaths[data.RelativePath] = struct{}{}
 	}
-	if closeData.RelativePath != openData.RelativePath {
-		t.Fatalf("FileClosed RelativePath %q != FileOpening %q", closeData.RelativePath, openData.RelativePath)
-	}
-	if closeData.FileCloseTime == "" || closeData.FileOpenTime == "" {
-		t.Fatal("FileClosed missing file times")
-	}
-	if closeData.FileSize <= 0 {
-		t.Fatalf("FileClosed FileSize %d", closeData.FileSize)
-	}
-	if closeData.Duration < 0 {
-		t.Fatalf("FileClosed Duration %v", closeData.Duration)
+
+	for rel := range openByPath {
+		if _, ok := closedPaths[rel]; ok {
+			continue
+		}
+		abs := filepath.Join(outputDir, filepath.FromSlash(rel))
+		stat, err := os.Stat(abs)
+		if err == nil && stat.Size() >= webhookKeptSegmentMinBytes {
+			t.Fatalf("FileOpening %q has no FileClosed; file still present (%d bytes)", rel, stat.Size())
+		}
 	}
 
 	endData, ok := parseIntegrationWebhookData(sessionEnded[0].EventData)
@@ -246,16 +312,8 @@ func assertWebhookRecordingLifecycle(
 		t.Fatalf("rel output path: %v", err)
 	}
 	wantRel = filepath.ToSlash(wantRel)
-	if closeData.RelativePath != wantRel {
-		t.Fatalf("FileClosed RelativePath %q want %q", closeData.RelativePath, wantRel)
-	}
-
-	stat, err := os.Stat(outputPath)
-	if err != nil {
-		t.Fatalf("stat output: %v", err)
-	}
-	if closeData.FileSize != stat.Size() {
-		t.Fatalf("FileClosed FileSize %d != file %d", closeData.FileSize, stat.Size())
+	if _, ok := openByPath[wantRel]; !ok {
+		t.Fatalf("captured output path %q missing FileOpening; got %v", wantRel, slices.Sorted(maps.Keys(openByPath)))
 	}
 
 	if room != nil {
@@ -290,18 +348,23 @@ func assertWebhookRecordingLifecycle(
 		}
 		return -1
 	}
-	// bilirec: SessionEnded is emitted from Stop() with metrics; FileClosed follows async finalize.
-	if idx("SessionStarted") < 0 || idx("FileOpening") < 0 || idx("FileClosed") < 0 || idx("SessionEnded") < 0 {
+	// SessionEnded is emitted from Stop(); FileClosed follows async finalize and may
+	// trail later FileOpening events when a live session rotates mid-record.
+	if idx(webhookRequiredSessionStarted) < 0 || idx(webhookRequiredFileOpening) < 0 ||
+		idx(webhookRequiredFileClosed) < 0 || idx(webhookRequiredSessionEnded) < 0 {
 		t.Fatal("missing required webhook events in delivery order")
 	}
-	if idx("FileOpening") <= idx("SessionStarted") {
-		t.Fatalf("FileOpening at %d must follow SessionStarted at %d", idx("FileOpening"), idx("SessionStarted"))
+	if idx(webhookRequiredFileOpening) <= idx(webhookRequiredSessionStarted) {
+		t.Fatalf("FileOpening at %d must follow SessionStarted at %d",
+			idx(webhookRequiredFileOpening), idx(webhookRequiredSessionStarted))
 	}
-	if idx("FileClosed") <= idx("FileOpening") {
-		t.Fatalf("FileClosed at %d must follow FileOpening at %d", idx("FileClosed"), idx("FileOpening"))
+	if idx(webhookRequiredFileClosed) <= idx(webhookRequiredFileOpening) {
+		t.Fatalf("FileClosed at %d must follow FileOpening at %d",
+			idx(webhookRequiredFileClosed), idx(webhookRequiredFileOpening))
 	}
-	if idx("SessionEnded") <= idx("SessionStarted") {
-		t.Fatalf("SessionEnded at %d must follow SessionStarted at %d", idx("SessionEnded"), idx("SessionStarted"))
+	if idx(webhookRequiredSessionEnded) <= idx(webhookRequiredSessionStarted) {
+		t.Fatalf("SessionEnded at %d must follow SessionStarted at %d",
+			idx(webhookRequiredSessionEnded), idx(webhookRequiredSessionStarted))
 	}
 }
 
@@ -328,10 +391,7 @@ func runWebhookIntegrationRecordTest(t *testing.T) {
 	t.Logf("webhook integration: recording room=%d for %s (webhook=%s)", roomID, recordDuration, webhookURL)
 	_ = sess.Monitor.RunRecordingProfiledWait(t, "webhook_recording", recordDuration)
 
-	t.Log("stopping recording")
-	if !sess.Recorder.Stop(roomID) {
-		t.Fatal("stop returned false")
-	}
+	recording.StopRecording(t, sess.Recorder, roomID)
 	recording.WaitUntilNoActiveRecordings(t, sess.Recorder, 30*time.Second)
 	time.Sleep(recording.SettleAfterStop)
 
@@ -339,11 +399,126 @@ func runWebhookIntegrationRecordTest(t *testing.T) {
 	if os.Getenv("CI") != "" {
 		drainTimeout = 5 * time.Minute
 	}
-	required := []string{"SessionStarted", "FileOpening", "FileClosed", "SessionEnded"}
-	posts := waitForWebhookEventTypes(t, collector, roomID, required, drainTimeout)
+	posts := waitForWebhookLifecycle(t, collector, roomID, outputDir, drainTimeout)
 	assertWebhookRecordingLifecycle(t, posts, roomID, outputDir, outputPath, roomInfo)
 
-	t.Logf("webhook integration ok: %d events for room %d", len(posts), roomID)
+	t.Logf("webhook integration ok: %d events for room %d FileOpening=%d FileClosed=%d",
+		len(posts), roomID,
+		eventTypeCounts(posts)[webhookRequiredFileOpening],
+		eventTypeCounts(posts)[webhookRequiredFileClosed])
+}
+
+func TestWebhookRecordingLifecycle_AllowsRotatedSegments(t *testing.T) {
+	outputDir := t.TempDir()
+	roomID := 1754796401
+	sessionID := "sess-rotate"
+	room := &bilibili.LiveRoomInfoDetail{
+		RoomID:  int64(roomID),
+		ShortID: 3,
+		Uname:   "anchor",
+		Title:   "title",
+	}
+	first := writeWebhookTestSegment(t, outputDir, "anchor-1754796401/title-20260927_144057.flv", 2048)
+	second := writeWebhookTestSegment(t, outputDir, "anchor-1754796401/title-20260927_144057-1.flv", 4096)
+	firstRel := webhookTestRel(t, outputDir, first)
+	secondRel := webhookTestRel(t, outputDir, second)
+
+	posts := []integrationWebhookEnvelope{
+		mustWebhookPost(t, webhookRequiredSessionStarted, webhookTestData(room, sessionID, "", 0, true)),
+		mustWebhookPost(t, webhookRequiredFileOpening, webhookTestData(room, sessionID, firstRel, 0, true)),
+		mustWebhookPost(t, webhookRequiredFileOpening, webhookTestData(room, sessionID, secondRel, 0, true)),
+		mustWebhookPost(t, webhookRequiredFileClosed, webhookTestClosedData(room, sessionID, firstRel, 2048)),
+		mustWebhookPost(t, webhookRequiredSessionEnded, webhookTestData(room, sessionID, "", 0, false)),
+		mustWebhookPost(t, webhookRequiredFileClosed, webhookTestClosedData(room, sessionID, secondRel, 4096)),
+	}
+	if !webhookLifecycleSettled(posts, outputDir) {
+		t.Fatal("rotated session should be settled once every kept FileOpening has FileClosed")
+	}
+	assertWebhookRecordingLifecycle(t, posts, roomID, outputDir, first, room)
+}
+
+func TestWebhookLifecycleSettled_WaitsForKeptSegmentClose(t *testing.T) {
+	outputDir := t.TempDir()
+	roomID := 42
+	sessionID := "sess-wait"
+	room := &bilibili.LiveRoomInfoDetail{RoomID: int64(roomID), Uname: "a", Title: "t"}
+	first := writeWebhookTestSegment(t, outputDir, "a-42/clip.flv", 2048)
+	second := writeWebhookTestSegment(t, outputDir, "a-42/clip-1.flv", 4096)
+	firstRel := webhookTestRel(t, outputDir, first)
+	secondRel := webhookTestRel(t, outputDir, second)
+
+	partial := []integrationWebhookEnvelope{
+		mustWebhookPost(t, webhookRequiredSessionStarted, webhookTestData(room, sessionID, "", 0, true)),
+		mustWebhookPost(t, webhookRequiredFileOpening, webhookTestData(room, sessionID, firstRel, 0, true)),
+		mustWebhookPost(t, webhookRequiredFileOpening, webhookTestData(room, sessionID, secondRel, 0, true)),
+		mustWebhookPost(t, webhookRequiredFileClosed, webhookTestClosedData(room, sessionID, firstRel, 2048)),
+		mustWebhookPost(t, webhookRequiredSessionEnded, webhookTestData(room, sessionID, "", 0, false)),
+	}
+	if webhookLifecycleSettled(partial, outputDir) {
+		t.Fatal("must wait for FileClosed of a kept rotated segment")
+	}
+
+	complete := append(slices.Clip(partial),
+		mustWebhookPost(t, webhookRequiredFileClosed, webhookTestClosedData(room, sessionID, secondRel, 4096)))
+	if !webhookLifecycleSettled(complete, outputDir) {
+		t.Fatal("settled after matching FileClosed arrived")
+	}
+}
+
+func writeWebhookTestSegment(t *testing.T, outputDir, rel string, size int) string {
+	t.Helper()
+	abs := filepath.Join(outputDir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(abs, bytes.Repeat([]byte("x"), size), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return abs
+}
+
+func webhookTestRel(t *testing.T, outputDir, abs string) string {
+	t.Helper()
+	rel, err := filepath.Rel(outputDir, abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.ToSlash(rel)
+}
+
+func webhookTestData(room *bilibili.LiveRoomInfoDetail, sessionID, rel string, size int64, recording bool) integrationWebhookEventData {
+	return integrationWebhookEventData{
+		SessionID:    sessionID,
+		RoomID:       int(room.RoomID),
+		ShortID:      room.ShortID,
+		Name:         room.Uname,
+		Title:        room.Title,
+		Recording:    recording,
+		RelativePath: rel,
+		FileSize:     size,
+	}
+}
+
+func webhookTestClosedData(room *bilibili.LiveRoomInfoDetail, sessionID, rel string, size int64) integrationWebhookEventData {
+	data := webhookTestData(room, sessionID, rel, size, true)
+	data.FileOpenTime = "2026-09-27T14:40:57Z"
+	data.FileCloseTime = "2026-09-27T14:46:16Z"
+	data.Duration = 319
+	return data
+}
+
+func mustWebhookPost(t *testing.T, eventType string, data integrationWebhookEventData) integrationWebhookEnvelope {
+	t.Helper()
+	raw, err := json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return integrationWebhookEnvelope{
+		EventType:      eventType,
+		EventTimestamp: "2026-09-27T14:40:57.000000000Z",
+		EventID:        eventType + "-" + data.RelativePath,
+		EventData:      raw,
+	}
 }
 
 // Long-running live recording with WEBHOOK_URLS pointed at a local collector.
