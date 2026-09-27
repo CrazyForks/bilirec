@@ -27,12 +27,14 @@
 - ✅ **多路并发录制** — 低配硬件上也能稳定多路同时录
 - ✅ **故障自动恢复** — FLV 时间戳修复与断流重连，连接波动时尽量不中断
 - ✅ **自动 MP4 转换** — 本地 FFmpeg 或 CloudConvert 云端转码
-- ✅ **监控指标** — 可选开启独立监控端口，长期观察录制与资源状态
+- ✅ **Webhook v2 事件** — 兼容录播姬格式，可对接 biliLive-tools 等做转封装、压制与上传
+- ✅ **监控与日志** — 可选独立 Prometheus 指标端口、VictoriaLogs/本地日志与 Grafana 仪表盘
 - ✅ **多端运行与接入** — RESTful API、[bilirec-web](https://github.com/bilirec/bilirec-web)（PWA）、[bilirec-mobile](https://github.com/bilirec/bilirec-mobile)（Android 内嵌后端）
 - ✅ **FRP 内网穿透** — 无公网 IP 也可外网访问管理界面与文件
 - ✅ **文件管理与播放** — 列表浏览、批量删除、内置播放器支持礼物特效与弹幕滚动回放
+- ✅ **低空间按房间清理** — 可按房间开启「空间不足时删除最旧文件」，在 `MIN_DISK_SPACE_BYTES` 门槛内自动腾位开录
 - ✅ **账号登录与刷新** — 匿名 / 扫码 / Controller 模式，Cookie 自动刷新
-- ✅ **低配与 microSD 优化** — 大块缓冲、序列化写入、跳过极短直播写盘；默认开启录製中定期清理旧文件缓存，压低容器监控内存
+- ✅ **低配与 microSD 优化** — 大块缓冲、序列化写入、跳过极短直播写盘；默认开启录制中定期清理旧文件缓存，压低容器监控内存
 
 配置详解、API、调优方案见 [官方文档站](https://www.bilirec.org/zh-cn/configuration/overview/)。
 
@@ -70,6 +72,7 @@
 
 ```bash
 chmod +x bilirec-linux-amd64 && ./bilirec-linux-amd64
+# Linux ARM64（树莓派等）：chmod +x bilirec-linux-arm64 && ./bilirec-linux-arm64
 # macOS Apple Silicon：chmod +x bilirec-darwin-arm64 && ./bilirec-darwin-arm64
 # macOS Intel：chmod +x bilirec-darwin-amd64 && ./bilirec-darwin-amd64
 # Windows：双击 bilirec-windows.exe
@@ -118,11 +121,15 @@ docker run -d --name bilirec -p 8080:8080 \
 | ---- | ---- |
 | 安装 | [guides/installation](https://www.bilirec.org/zh-cn/guides/installation/) |
 | 快速开始 | [guides/quick-start](https://www.bilirec.org/zh-cn/guides/quick-start/) |
+| Docker | [guides/docker](https://www.bilirec.org/zh-cn/guides/docker/) |
+| 录制直播间 | [guides/recording](https://www.bilirec.org/zh-cn/guides/recording/) |
 | 配置与调优 | [configuration/overview](https://www.bilirec.org/zh-cn/configuration/overview/) |
 | 树莓派 / microSD 默认 | [configuration/pi5-defaults](https://www.bilirec.org/zh-cn/configuration/pi5-defaults/) |
 | 内存占用估算 | [configuration/memory-estimation](https://www.bilirec.org/zh-cn/configuration/memory-estimation/) |
 | REST API | [api/overview](https://www.bilirec.org/zh-cn/api/overview/)（运行时根路径 `/` 另有 Swagger UI） |
+| Webhook 对接 | [guides/webhook-integration](https://www.bilirec.org/zh-cn/guides/webhook-integration/) |
 | 监控指标 | [configuration/metrics](https://www.bilirec.org/zh-cn/configuration/metrics/) |
+| Grafana 仪表盘 | [configuration/grafana-dashboards](https://www.bilirec.org/zh-cn/configuration/grafana-dashboards/) |
 | 常见问题 | [guides/faq](https://www.bilirec.org/zh-cn/guides/faq/) |
 | 性能实测 | [guides/performance-benchmark](https://www.bilirec.org/zh-cn/guides/performance-benchmark/) |
 
