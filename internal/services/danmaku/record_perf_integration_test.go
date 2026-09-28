@@ -1,3 +1,5 @@
+//go:build integration
+
 package danmaku_test
 
 import (

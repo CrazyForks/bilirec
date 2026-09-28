@@ -1,3 +1,5 @@
+//go:build integration
+
 package webhook_test
 
 import (

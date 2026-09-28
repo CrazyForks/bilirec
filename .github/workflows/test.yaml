@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  test_program:
+  unit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +38,7 @@ jobs:
       - name: Setup FFmpeg
         uses: ./.github/actions/setup-ffmpeg
 
-      - name: Run tests
+      - name: Run unit tests
         uses: robherley/go-test-action@v0
         env:
           BILIBILI_LOGIN_MODE: anonymous
@@ -53,47 +53,11 @@ jobs:
         run: |
           go test ./internal/services/danmaku -bench=. -benchmem -count=1 -timeout 15m | tee "${{ runner.temp }}/danmaku-bench.txt"
 
-      - name: Run concurrent 3-way FLV record soak
-        uses: robherley/go-test-action@v0
-        env:
-          BILIBILI_LOGIN_MODE: anonymous
-          OUTPUT_DIR: ${{ runner.temp }}/recorder-records/zzz
-          RECORDER_TEST_PROFILE_DIR: ${{ runner.temp }}/recorder-profiles/zzz
-        with:
-          testArguments: './internal/services/recorder -timeout 30m -run TestZZZ_Final_Concurrent3WayFlvRecord -count=1'
-
-      - name: Run concurrent 3-way FMP4 record soak
-        uses: robherley/go-test-action@v0
-        env:
-          BILIBILI_LOGIN_MODE: anonymous
-          OUTPUT_DIR: ${{ runner.temp }}/recorder-records/zzz
-          RECORDER_TEST_PROFILE_DIR: ${{ runner.temp }}/recorder-profiles/zzz
-        with:
-          testArguments: './internal/services/recorder -timeout 30m -run TestZZZ_Final_Concurrent3WayFmp4Record -count=1'
-
-      - name: Run danmaku jsonl record soak
-        uses: robherley/go-test-action@v0
-        env:
-          BILIBILI_LOGIN_MODE: anonymous
-          OUTPUT_DIR: ${{ runner.temp }}/recorder-records/zzz
-          RECORDER_TEST_PROFILE_DIR: ${{ runner.temp }}/recorder-profiles/zzz
-        with:
-          testArguments: './internal/services/danmaku -timeout 30m -run TestZZZ_Final_DanmakuJsonlRecord -count=1'
-
-      - name: Run concurrent 3-way danmaku jsonl record soak
-        uses: robherley/go-test-action@v0
-        env:
-          BILIBILI_LOGIN_MODE: anonymous
-          OUTPUT_DIR: ${{ runner.temp }}/recorder-records/zzz
-          RECORDER_TEST_PROFILE_DIR: ${{ runner.temp }}/recorder-profiles/zzz
-        with:
-          testArguments: './internal/services/danmaku -timeout 30m -run TestZZZ_Final_Concurrent3WayDanmakuJsonlRecord -count=1'
-
       - name: Upload recorder pprof profiles
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: recorder-pprof-${{ github.run_id }}-${{ github.run_attempt }}
+          name: recorder-pprof-unit-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/recorder-profiles/
           if-no-files-found: ignore
           retention-days: 30
@@ -107,11 +71,146 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  integration:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - id: internal-modules-metrics
+            pkg: ./internal/modules/metrics
+          - id: internal-services-webhook
+            pkg: ./internal/services/webhook
+          - id: internal-services-subcheck
+            pkg: ./internal/services/subcheck
+          - id: internal-services-subscribe
+            pkg: ./internal/services/subscribe
+          - id: internal-services-convert
+            pkg: ./internal/services/convert
+          - id: internal-processors
+            pkg: ./internal/processors
+          - id: pkg-flv
+            pkg: ./pkg/flv
+          - id: recorder-flv
+            pkg: ./internal/services/recorder
+            run: ^TestFlvRecord$
+          - id: recorder-ts
+            pkg: ./internal/services/recorder
+            run: ^TestTsRecord$
+          - id: recorder-fmp4
+            pkg: ./internal/services/recorder
+            run: ^TestFmp4Record$
+          - id: recorder-flv-fmp4-concurrent
+            pkg: ./internal/services/recorder
+            run: ^TestFlvFmp4ConcurrentRecord$
+          - id: recorder-auto-stop
+            pkg: ./internal/services/recorder
+            run: ^TestFlvRecord_AutoStopAfterDuration$
+          - id: recorder-audio
+            pkg: ./internal/services/recorder
+            run: ^TestAudioOnly
+          - id: recorder-mem-cpu-concurrent
+            pkg: ./internal/services/recorder
+            run: ^TestRecorder_(MemoryLeak_|Goroutine_|Start_CPUSpike_|MaxConcurrent|ConcurrentStartBurst)
+          - id: recorder-lowdisk
+            pkg: ./internal/services/recorder
+            run: ^TestIntegration_LowDisk_
+          - id: danmaku-record
+            pkg: ./internal/services/danmaku
+            run: ^(TestDanmakuJsonlRecord|TestDanmakuXmlRecord|TestDanmakuRecord_Disabled)$
+          - id: danmaku-perf
+            pkg: ./internal/services/danmaku
+            run: ^TestDanmaku(JsonlRecord_Perf|XmlRecord_Perf|JsonlConcurrent3Way_Perf|Record_CPUSpike|Record_MemoryLeak_MultipleStartStop|Record_GoroutineLeak|Record_DeltaVsVideoOnly)$
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare Go and swagger docs
+        uses: ./.github/actions/setup-go-swagger
+        with:
+          go-version: '1.26.6'
+
+      - name: Setup FFmpeg
+        uses: ./.github/actions/setup-ffmpeg
+
+      - name: Run integration tests (${{ matrix.id }})
+        id: integration_test
+        env:
+          BILIBILI_LOGIN_MODE: anonymous
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG="${{ matrix.pkg }}"
+          PROFILE_SLUG="${{ matrix.id }}"
+          export RECORDER_TEST_PROFILE_DIR="${RUNNER_TEMP}/recorder-profiles/integration/${PROFILE_SLUG}"
+          mkdir -p "$RECORDER_TEST_PROFILE_DIR"
+          echo "profile_slug=${PROFILE_SLUG}" >> "$GITHUB_OUTPUT"
+          RUN_FILTER="${{ matrix.run }}"
+          if [ -n "$RUN_FILTER" ]; then
+            echo "go test -tags integration -count=1 -timeout 2h $PKG -run $RUN_FILTER"
+            go test -tags integration -count=1 -timeout 2h "$PKG" -run "$RUN_FILTER"
+          else
+            echo "go test -tags integration -count=1 -timeout 2h $PKG -skip TestZZZ_Final_"
+            go test -tags integration -count=1 -timeout 2h "$PKG" -skip 'TestZZZ_Final_'
+          fi
+
+      - name: Upload integration pprof profiles
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: recorder-pprof-integration-${{ steps.integration_test.outputs.profile_slug }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/recorder-profiles/integration/${{ steps.integration_test.outputs.profile_slug }}/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  soak:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: recorder-flv-3way
+            test_arguments: './internal/services/recorder -timeout 30m -run ^TestZZZ_Final_Concurrent3WayFlvRecord$ -count=1'
+          - id: recorder-fmp4-3way
+            test_arguments: './internal/services/recorder -timeout 30m -run ^TestZZZ_Final_Concurrent3WayFmp4Record$ -count=1'
+          - id: danmaku-jsonl
+            test_arguments: './internal/services/danmaku -tags integration -timeout 30m -run ^TestZZZ_Final_DanmakuJsonlRecord$ -count=1'
+          - id: danmaku-jsonl-3way
+            test_arguments: './internal/services/danmaku -tags integration -timeout 30m -run ^TestZZZ_Final_Concurrent3WayDanmakuJsonlRecord$ -count=1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare Go and swagger docs
+        uses: ./.github/actions/setup-go-swagger
+        with:
+          go-version: '1.26.6'
+
+      - name: Setup FFmpeg
+        uses: ./.github/actions/setup-ffmpeg
+
+      - name: Run soak test (${{ matrix.id }})
+        uses: robherley/go-test-action@v0
+        env:
+          BILIBILI_LOGIN_MODE: anonymous
+          OUTPUT_DIR: ${{ runner.temp }}/recorder-records/zzz/${{ matrix.id }}
+          RECORDER_TEST_PROFILE_DIR: ${{ runner.temp }}/recorder-profiles/zzz/${{ matrix.id }}
+        with:
+          testArguments: ${{ matrix.test_arguments }}
+          omit: successful
+
+      - name: Upload ZZZ recorder pprof profiles
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: recorder-pprof-soak-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/recorder-profiles/zzz/${{ matrix.id }}/
+          if-no-files-found: ignore
+          retention-days: 30
+
       - name: Upload ZZZ recorder records
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: recorder-records-zzz-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/recorder-records/
+          name: recorder-records-soak-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/recorder-records/zzz/${{ matrix.id }}/
           if-no-files-found: ignore
           retention-days: 30
