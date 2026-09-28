@@ -15,6 +15,7 @@ type Service struct {
 	chunkPools         *pool.LazyDualPool[*pool.BucketedBytesPool]
 	chanBufferSize     int
 	highChanBufferSize int
+	streamIdleTimeout  time.Duration
 }
 
 func NewService(cfg *config.Config) *Service {
@@ -36,6 +37,7 @@ func NewService(cfg *config.Config) *Service {
 		),
 		chanBufferSize:     cfg.ReadStreamChanBufferSize,
 		highChanBufferSize: highChanBufferSize,
+		streamIdleTimeout:  time.Duration(cfg.StreamIdleTimeoutSecs) * time.Second,
 	}
 }
 

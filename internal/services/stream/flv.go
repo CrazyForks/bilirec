@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bilirec/bilirec/pkg/pool"
+	"github.com/bilirec/bilirec/pkg/rw"
 	"github.com/go-resty/resty/v2"
 )
 
@@ -31,6 +32,7 @@ func (r *Service) readFlv(
 	readSize int,
 	releasePool func(),
 ) {
+	stream = rw.NewIdleTimeoutReadCloser(stream, r.streamIdleTimeout)
 	defer stream.Close()
 	defer close(ch)
 	defer releasePool()
@@ -46,7 +48,9 @@ func (r *Service) readFlv(
 				r.putChunk(chunkPool, buf)
 				return
 			} else if err != nil {
-				if ctx.Err() == nil && !errors.Is(err, context.Canceled) {
+				if errors.Is(err, rw.ErrIdleTimeout) {
+					log.Warnf("直播流超过 %v 没有收到数据，关闭连接", r.streamIdleTimeout)
+				} else if ctx.Err() == nil && !errors.Is(err, context.Canceled) {
 					log.Errorf("读取直播流失败：%v", err)
 				}
 				r.putChunk(chunkPool, buf)

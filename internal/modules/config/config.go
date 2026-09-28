@@ -122,6 +122,9 @@ type Config struct {
 	SubcheckMaxShards                                   int
 	SubcheckJitterSecs                                  int
 
+	// StreamIdleTimeoutSecs: stream Read idle limit (seconds); 0 = off.
+	StreamIdleTimeoutSecs int
+
 	// configurable performances
 	ReadStreamBytesPoolSize      int
 	ReadStreamChanBufferSize     int
@@ -267,6 +270,8 @@ func provider(lc fx.Lifecycle) (*Config, error) {
 		SubcheckMaxIntervalSecs:                             utils.MustAtoi(utils.EmptyOrElse(os.Getenv("SUBCHECK_MAX_INTERVAL_SECS"), "300")),
 		SubcheckMaxShards:                                   utils.MustAtoi(utils.EmptyOrElse(os.Getenv("SUBCHECK_MAX_SHARDS"), "32")),
 		SubcheckJitterSecs:                                  utils.MustAtoi(utils.EmptyOrElse(os.Getenv("SUBCHECK_JITTER_SECS"), "2")),
+
+		StreamIdleTimeoutSecs: utils.MustAtoi(utils.EmptyOrElse(os.Getenv("STREAM_IDLE_TIMEOUT"), "20")), // 0 = off
 
 		// stream performance configs
 		ReadStreamBytesPoolSize:      utils.MustAtoi(utils.EmptyOrElse(os.Getenv("READ_STREAM_BYTES_POOL_SIZE"), "524288")),       // default 512KB

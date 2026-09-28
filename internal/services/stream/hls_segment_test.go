@@ -24,7 +24,7 @@ func TestReadSegmentBodyFromPool_PooledReuse(t *testing.T) {
 		t.Fatalf("get: %v", err)
 	}
 
-	data, err := hlsutil.ReadSegmentBodyFromPool(chunkPool, resp)
+	data, err := hlsutil.ReadSegmentBodyFromPool(chunkPool, resp, 0)
 	if err != nil {
 		t.Fatalf("ReadSegmentBodyFromPool: %v", err)
 	}

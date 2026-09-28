@@ -193,7 +193,7 @@ func (r *StreamRunner) run() {
 
 	consecutivePlaylistFailures := 0
 	consecutiveSegmentFailures := 0
-	segmentFailureBackoff := backoff.NewExpotential(2*time.Second, 2, 30*time.Second)
+	segmentFailureBackoff := backoff.NewExpotential(2*time.Second, 2, 5*time.Second)
 	lastSyncWaitBaseSeq := int64(-1)
 	traceEnabled := r.log.Enabled(logger.TraceLevel)
 

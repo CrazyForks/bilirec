@@ -30,7 +30,7 @@ func (r *Service) ReadHlsStream(
 	chunkPool *pool.BucketedBytesPool,
 	releasePool func(),
 ) (<-chan []byte, error) {
-	readBody := hls.PoolSegmentBodyReader(chunkPool)
+	readBody := hls.PoolSegmentBodyReader(chunkPool, r.streamIdleTimeout)
 	release := hls.PoolBytesReleaser(chunkPool)
 
 	settle := &hls.InitSettle{

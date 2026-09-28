@@ -3,19 +3,22 @@ package hls
 import (
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/bilirec/bilirec/pkg/pool"
+	"github.com/bilirec/bilirec/pkg/rw"
 	"github.com/go-resty/resty/v2"
 )
 
 const segmentBodyPoolInitialWant = 256 * 1024
 
 // ReadSegmentBodyFromPool reads a segment/map response into a BucketedBytesPool buffer.
-func ReadSegmentBodyFromPool(chunkPool *pool.BucketedBytesPool, resp *resty.Response) ([]byte, error) {
+func ReadSegmentBodyFromPool(chunkPool *pool.BucketedBytesPool, resp *resty.Response, idleTimeout time.Duration) ([]byte, error) {
 	body := resp.RawBody()
 	if body == nil {
 		return nil, fmt.Errorf("hls：响应体为空")
 	}
+	body = rw.NewIdleTimeoutReadCloser(body, idleTimeout)
 	defer body.Close()
 
 	want := segmentBodyPoolInitialWant
@@ -47,9 +50,9 @@ func ReadSegmentBodyFromPool(chunkPool *pool.BucketedBytesPool, resp *resty.Resp
 }
 
 // PoolSegmentBodyReader returns a SegmentBodyReader bound to chunkPool.
-func PoolSegmentBodyReader(chunkPool *pool.BucketedBytesPool) SegmentBodyReader {
+func PoolSegmentBodyReader(chunkPool *pool.BucketedBytesPool, idleTimeout time.Duration) SegmentBodyReader {
 	return func(resp *resty.Response) ([]byte, error) {
-		return ReadSegmentBodyFromPool(chunkPool, resp)
+		return ReadSegmentBodyFromPool(chunkPool, resp, idleTimeout)
 	}
 }
 
