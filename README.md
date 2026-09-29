@@ -1,6 +1,6 @@
 # Bilirec
 
-一个专为低配设备优化的高性能 Bilibili 直播录制后端。
+专为低配设备优化的 B 站直播录制与回放一体化工具，可在手机上运行。
 
 **完整文档：** [www.bilirec.org/zh-cn/](https://www.bilirec.org/zh-cn/) · [常见问题](https://www.bilirec.org/zh-cn/guides/faq/)
 
