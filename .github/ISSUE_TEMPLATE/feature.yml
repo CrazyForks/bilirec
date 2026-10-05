@@ -1,0 +1,38 @@
+name: 功能建议
+description: 对 bilirec 核心、PWA 或手机版的改进建议
+title: "[建议] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        使用疑问请先查 [常见问题](https://www.bilirec.org/zh-cn/guides/faq/)。  
+        标题可写为 `[建议][核心]` / `[建议][PWA]` / `[建议][手机]` 等，便于区分。
+
+  - type: input
+    id: product
+    attributes:
+      label: 涉及产品
+      placeholder: 核心 / PWA / 手机版
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 描述
+      description: 想解决什么问题、期望怎样的行为
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案（可选）
+      description: 若有具体想法可补充
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: 现在的替代办法（可选）

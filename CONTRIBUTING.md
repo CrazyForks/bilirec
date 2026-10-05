@@ -13,6 +13,7 @@
 - 仅当错误提示/UI 文案无法让用户自行理解时，才在 [guides/faq](https://www.bilirec.org/zh-cn/guides/faq/) 新增条目。
 - FAQ 正文用白话，环境变量与公式放在专题页链接里。
 - 行为变更时同步更新 FAQ 及相关专题页的「常见问题」嵌入块。
+- **已在 FAQ 说明的情况不要开 GitHub Issue**；用户反馈统一走 [Issue 模板](https://github.com/bilirec/bilirec/issues/new/choose)（核心 / PWA / 手机版 / 功能建议）。
 
 ## 代码贡献
 

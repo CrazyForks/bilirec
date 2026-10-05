@@ -4,7 +4,7 @@
 
 **完整文档：** [www.bilirec.org/zh-cn/](https://www.bilirec.org/zh-cn/) · [常见问题](https://www.bilirec.org/zh-cn/guides/faq/)
 
-**交流与反馈：** QQ 群 [834229325](https://qm.qq.com/q/oMTN3EsGBy)，用于交流和问题反映。
+**交流与反馈：** BUG / 問題回報与功能建议请用 [GitHub Issue 模板](https://github.com/bilirec/bilirec/issues/new/choose) 提交；使用疑问先看 [常见问题](https://www.bilirec.org/zh-cn/guides/faq/) 或 QQ 群 [834229325](https://qm.qq.com/q/oMTN3EsGBy)。
 
 ## 目录
 

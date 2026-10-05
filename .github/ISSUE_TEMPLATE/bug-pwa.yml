@@ -1,0 +1,69 @@
+name: PWA BUG / 問題回報
+description: bilirec-web 浏览器 / PWA（登录、播放、下载、推送、安装更新、界面等）
+title: "[PWA] "
+labels:
+  - bug
+  - pwa
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请先阅读 [常见问题](https://www.bilirec.org/zh-cn/guides/faq/)。  
+        录制后端、文件内容、转码等请改用「核心 BUG / 問題回報」模板。
+
+  - type: checkboxes
+    id: faq_ack
+    attributes:
+      label: 确认
+      options:
+        - label: 我已阅读常见问题
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: 后端版本（若已知）
+      description: 管理页「关于」中的 current
+      placeholder: 例如 1.2.3
+
+  - type: input
+    id: environment
+    attributes:
+      label: 浏览器与环境
+      description: 浏览器及版本、管理页地址（官方 / 自建）、是否安装为 PWA、后端连接方式等
+      placeholder: 例如 Chrome 131，app.bilirec.org，PWA，后端 localhost:8080
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 截图或控制台（可选）

@@ -1,0 +1,71 @@
+name: 手机版 BUG / 問題回報
+description: bilirec-mobile App（前台服务、权限、存储、管理页、更新、闪退等）
+title: "[手机] "
+labels:
+  - bug
+  - mobile
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请先阅读 [常见问题](https://www.bilirec.org/zh-cn/guides/faq/)。  
+        录制内容、订阅、转码等请改用「核心 BUG / 問題回報」模板（环境栏注明手机内嵌后端）。当前仅 **Android** 支持内嵌录制。
+
+  - type: checkboxes
+    id: faq_ack
+    attributes:
+      label: 确认
+      options:
+        - label: 我已阅读常见问题
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: App 版本
+      placeholder: 例如 1.0.1
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: 设备与环境
+      description: 品牌型号、Android 版本、输出路径等你认为相关的信息
+      placeholder: 例如 小米 14，Android 14，内置存储
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: bootstrap 日志或其它补充（可选）
+      description: 设置中导出的 `bootstrap_*.log` 片段

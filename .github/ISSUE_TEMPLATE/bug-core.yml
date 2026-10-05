@@ -1,0 +1,73 @@
+name: 核心 BUG / 問題回報
+description: bilirec 录制后端、订阅、转码、弹幕文件、API 等（Docker / 二进制 / 手机内嵌后端）
+title: "[核心] "
+labels:
+  - bug
+  - core
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请先阅读 [常见问题](https://www.bilirec.org/zh-cn/guides/faq/)。  
+        管理页 / PWA、手机 App 外壳问题请改用对应模板。勿粘贴密码、Token 或密钥。
+
+  - type: checkboxes
+    id: faq_ack
+    attributes:
+      label: 确认
+      options:
+        - label: 我已阅读常见问题
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: 管理页「关于」或 `GET /version` 的 current；Docker 可写镜像 tag
+      placeholder: 例如 1.2.3
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: 环境与运行方式
+      description: 操作系统、架构，以及 Docker / 发行版二进制 / 手机内嵌后端等
+      placeholder: 例如 Debian 12 arm64，Docker ghcr.io/bilirec/bilirec:1.2.3
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 简要说明发生了什么、影响范围
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志或补充信息（可选）
+      description: 可设 `DEBUG=true` 后附上 `database/bilirec.log` 或容器日志片段

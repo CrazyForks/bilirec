@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 常见问题（FAQ）
+    url: https://www.bilirec.org/zh-cn/guides/faq/
+    about: 启动失败、文件名、弹幕变少、转码、会话过期、手机后台被杀等已有说明的情况，请先查阅。
+  - name: QQ 交流群
+    url: https://qm.qq.com/q/oMTN3EsGBy
+    about: 还不确定要不要开 BUG / 問題回報时，可先进群交流（群号 834229325）。
